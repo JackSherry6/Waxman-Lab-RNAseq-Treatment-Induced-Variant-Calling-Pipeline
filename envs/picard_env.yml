@@ -1,0 +1,6 @@
+name: picard_env
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - picard=2.25.2

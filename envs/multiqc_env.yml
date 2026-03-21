@@ -1,0 +1,10 @@
+name: multiqc_env
+channels:
+  - bioconda
+  - conda-forge
+
+dependencies:
+  - multiqc=1.10.1
+  - setuptools
+  - rich=10.16.2
+  - markdown<3.4

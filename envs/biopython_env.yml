@@ -1,0 +1,8 @@
+name: biopython_env
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.11
+  - pandas
+  - biopython=1.84

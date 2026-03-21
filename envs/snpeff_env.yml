@@ -1,0 +1,7 @@
+name: snpeff_env
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - snpeff
+  - openjdk
