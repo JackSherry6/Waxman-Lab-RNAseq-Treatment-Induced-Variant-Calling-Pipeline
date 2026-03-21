@@ -39,6 +39,8 @@ This project was prompted by my desire to improve the quality of SNP calling fro
 Basic execution: 
 - ```module load miniconda```
 - ```conda activate <name_of_your_nexflow_conda_env>```
+- Run ```touch bin/NO_FILE_LNCRNA bin/NO_FILE_KNOWNSNPS``` to create sentinel files for optional params
+- Run ```chmod +x bin/group_variants.py``` and ```chmod +x bin/process_vcfs.py```
 - See configuration in order to set sample paths, variables and names
 - ```nextflow run main.nf -profile conda,cluster``` (for waxman lab you should always run on the cluster, but if using aws, substitute ```aws``` for ```cluster```)
 - NOTE: other nextflow commands will work but these are the ones I use and recommend.
