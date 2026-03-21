@@ -1,8 +1,8 @@
 # Waxman Lab RNA-seq SNP Calling Pipeline for CD1 Mouse Reference Genome
 
-This project was prompted by my desire to improve the quality of SNP calling from RNA-seq data by using a CD1-specific reference genome (Jung et al., 2023). I was tasked with developing a method to accurately detect mutations driving tumorigenesis across the genome from RNA-seq data generated from our outbred CD1 mouse strain. Previously, our lab aligned reads and performed differential expression analyses using the mm9 reference genome; however, this approach was inadequate for identifying polymorphisms in an outbred population. The mm9 reference represents a single, inbred laboratory strain and therefore lacks the genetic diversity present in CD1 mice. As a result, alignment accuracy was reduced, variant calls were unreliable, and many true CD1-specific SNPs were missed. On top of that, the initial variant callers I used did not offer the option to compare control and tumor samples during the variant calling process, which caused additional complications on manually filtering and processing variant data. Therefore I decided to switch to varscan somatic for control vs tumor variant calling. These improvements allowed for more accurate mapping, improved SNP detection, and better representation of the genetic variation inherent to this outbred strain. 
+This project was prompted by my desire to improve the quality of SNP calling from RNA-seq data by using a CD1-specific reference genome (Jung et al., 2023). I was tasked with developing a method to accurately detect mutations driving tumorigenesis across the genome from RNA-seq data generated from our outbred CD1 mouse strain. Previously, our lab aligned reads and performed differential expression analyses using the mm9 reference genome; however, this approach was inadequate for identifying polymorphisms in an outbred population. The mm9 reference represents a single, inbred laboratory strain and therefore lacks the genetic diversity present in CD1 mice. As a result, alignment accuracy was reduced, variant calls were unreliable, and many true CD1-specific SNPs were missed. Additionally, there was no reliable gtf file or known snps vcf for our CD1 mouse strain. Since our lab's main focus is mutagen-induced liver cancer, I wanted the pipeline to handle tumor samples accurately, while also being able to process non-tumor samples in the same run and compare both. Therefore I decided to switch the tool to varscan somatic for control vs tumor variant calling (although I am currently looking to switch to Mutect2). These improvements allowed for more accurate mapping, improved SNP detection, and better representation of the genetic variation inherent to this outbred strain. 
 
-* Most recent update (12/16/25): Modified the pipeline for per replicate experimental classification. Each individual experimental sample is compared to a single consensus file based on the control samples. 
+**Add recent progress
 
 ## Table of Contents
 1. Features
@@ -39,25 +39,29 @@ This project was prompted by my desire to improve the quality of SNP calling fro
 Basic execution: 
 - ```module load miniconda```
 - ```conda activate <name_of_your_nexflow_conda_env>```
-- Set params.samples to the location of the folder containing your files
-- Set params.ref_genome, ref_index, ref_dict to their respective file locations
-- Modify the samples.csv file according to your sample names and groups 
+- See configuration in order to set sample paths, variables and names
 - ```nextflow run main.nf -profile conda,cluster``` (for waxman lab you should always run on the cluster, but if using aws, substitute ```aws``` for ```cluster```)
+- NOTE: other nextflow commands will work but these are the ones I use and recommend.
 
 ## Configuration
 - Lines for configuration in config file:
-  - set samples, ref_genome, ref_index, ref_dict to locations
-  - Set queueSize to appropriate size based on sample size (I use a quarter of the number of samples)
-  - Optional: set resume to true in order to save progress during runs
+  - Fill in the example samplesheet with your fastq paths (name sure the sample names end in an alphabetical character and then a number ex. _d5).
+  - Mandatory: Set ref_genome and gtf to their respective paths.
+  - Mandatory: Set control_cnt to the number of control samples multiplied by 10.
+  - Mandatory: Define your group names as the same names you used in the samplesheet minus the trailing integer. Add or remove groups depending on how many groups                you are analyzing.
+  - Optional: set paths for fa_dict, star_index, lncRNAs_ref, and known_snps_vcf or set them to 'null' (fa_dict and star_index will help speed the pipeline up                    while lncRNAs_ref and known_snps_vcfgrant will additional output data).
 
-## Input and Output
+## Inputs and Outputs
 - Input:
-  - Folder of cram/crai files (specify location in configs)
-  - Reference fasta file (specify location in configs)
-  - Reference fasta index file (specify location in configs)
-  - Reference fasta dictionary file (specify location in configs)
+  - Sample Fastq files
+  - Reference Fasta file
+  - Matching reference GTF file (preferably with full transcriptomic features, not exonic only)
+  - Optional: fasta dictionary, star index, known lncRNA vcf, and known snps vcf
 - Output:
-  - See results folder after program runs
+  - Comprehensive Multiqc report
+  - Bam and bam index files for genome browser viewing
+  - Per-sample vcf files (snp and indel)
+  - Annotated, processed, group specific csv files (snp and indel)
 
 ## Contributing 
 - Email me at jgsherry@bu.edu for additional information or contributing information
