@@ -1,20 +1,14 @@
 #!/usr/bin/env python3
-"""
-VCF Processing Script
-- Parses VCF files and expands INFO/FORMAT fields
-- Annotates with lncRNA overlaps (if reference provided)
-- Annotates with consensus/known SNP VCF overlaps (if provided)
-"""
-
 import re
+import sys
 import gzip
 import argparse
+import os
 import pandas as pd
 from collections import defaultdict
 
 
 def parse_snpeff_ann_first(ann_value: str) -> pd.Series:
-    """Parse the first (most impactful) SnpEff annotation."""
     out = {
         "snpeff_allele": None, "snpeff_effect": None, "snpeff_impact": None,
         "snpeff_gene_name": None, "snpeff_gene_id": None, "snpeff_feature_type": None,
@@ -42,7 +36,6 @@ def parse_snpeff_ann_first(ann_value: str) -> pd.Series:
 
 
 def read_vcf_to_df(vcf_path: str) -> pd.DataFrame:
-    """Read a VCF file into a pandas DataFrame."""
     skip_rows = 0
     opener = gzip.open if vcf_path.endswith(".gz") else open
 
@@ -60,7 +53,6 @@ def read_vcf_to_df(vcf_path: str) -> pd.DataFrame:
 
 
 def split_info_column(df: pd.DataFrame) -> pd.DataFrame:
-    """Split the INFO column into separate columns."""
     info_df = (
         df["INFO"]
         .astype(str)
@@ -76,7 +68,6 @@ def split_info_column(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def parse_format_row(format_str: str, normal_str: str, tumor_str: str) -> pd.Series:
-    """Parse FORMAT field and split NORMAL/TUMOR sample data."""
     keys = str(format_str).split(":")
     row = {}
     for k, n, t in zip(keys, str(normal_str).split(":"), str(tumor_str).split(":")):
@@ -85,14 +76,8 @@ def parse_format_row(format_str: str, normal_str: str, tumor_str: str) -> pd.Ser
     return pd.Series(row)
 
 
-# =============================================================================
-# lncRNA Reference Loading and Overlap Checking
-# =============================================================================
-
 def parse_gtf_attributes(attr_string: str) -> dict:
-    """Parse GTF attribute string into a dictionary."""
     attrs = {}
-    # Match patterns like key "value" or key 'value'
     pattern = r'(\w+)\s*["\']([^"\']*)["\']'
     matches = re.findall(pattern, attr_string)
     for key, value in matches:
@@ -101,19 +86,10 @@ def parse_gtf_attributes(attr_string: str) -> dict:
 
 
 def load_lncrna_reference(lncrna_file: str) -> dict:
-    """
-    Load lncRNA reference file (GTF-like format with exon coordinates).
-    Returns a dictionary organized by chromosome for efficient lookup.
-    
-    Expected format (tab-separated):
-    chr1  source  exon  start  end  score  strand  frame  attributes
-    
-    Attributes should contain gene_name or gene_id.
-    """
     if not lncrna_file:
         return None
     
-    print(f"Loading lncRNA reference from {lncrna_file}...")
+    print(f"Loading lncRNA reference from {lncrna_file}...", file=sys.stderr)
     
     lncrna_regions = defaultdict(list)
     
@@ -129,13 +105,10 @@ def load_lncrna_reference(lncrna_file: str) -> dict:
                     continue
                 
                 chrom = parts[0]
-                # parts[1] = source, parts[2] = feature (exon)
                 start = int(parts[3])
                 end = int(parts[4])
-                # parts[5] = score, parts[6] = strand, parts[7] = frame
                 attributes = parts[8]
                 
-                # Parse attributes to get gene name
                 attrs = parse_gtf_attributes(attributes)
                 gene_name = attrs.get('gene_name', attrs.get('gene_id', 'unknown'))
                 
@@ -145,52 +118,42 @@ def load_lncrna_reference(lncrna_file: str) -> dict:
                     'gene_name': gene_name
                 })
         
-        # Sort regions by start position for each chromosome
         for chrom in lncrna_regions:
             lncrna_regions[chrom].sort(key=lambda x: x['start'])
         
         total_regions = sum(len(v) for v in lncrna_regions.values())
-        print(f"  Loaded {total_regions} lncRNA exon regions across {len(lncrna_regions)} chromosomes")
+        print(f"  Loaded {total_regions} lncRNA exon regions across {len(lncrna_regions)} chromosomes", file=sys.stderr)
         
         return dict(lncrna_regions)
     
     except FileNotFoundError:
-        print(f"  Warning: lncRNA file not found: {lncrna_file}")
+        print(f"  Warning: lncRNA file not found: {lncrna_file}", file=sys.stderr)
         return None
     except Exception as e:
-        print(f"  Warning: Error loading lncRNA file: {e}")
+        print(f"  Warning: Error loading lncRNA file: {e}", file=sys.stderr)
         return None
 
 
 def check_lncrna_overlap(chrom: str, pos: int, lncrna_regions: dict) -> str:
-    """
-    Check if a SNP position overlaps with any lncRNA exon.
-    Returns the gene name(s) if overlap found, empty string otherwise.
-    """
     if not lncrna_regions or chrom not in lncrna_regions:
         return ""
     
     overlapping_genes = []
-    
     for region in lncrna_regions[chrom]:
-        # Check if position falls within the exon
         if region['start'] <= pos <= region['end']:
             overlapping_genes.append(region['gene_name'])
-        # Early exit if we've passed the position (regions are sorted)
         elif region['start'] > pos:
             break
     
-    # Return unique gene names, semicolon-separated
     unique_genes = list(dict.fromkeys(overlapping_genes))
     return ';'.join(unique_genes) if unique_genes else ""
 
 
 def annotate_lncrna(df: pd.DataFrame, lncrna_regions: dict) -> pd.DataFrame:
-    """Add lncRNA column to dataframe based on coordinate overlap."""
     if lncrna_regions is None:
         return df
     
-    print("Annotating lncRNA overlaps...")
+    print("Annotating lncRNA overlaps...", file=sys.stderr)
     
     df['lncRNA'] = df.apply(
         lambda row: check_lncrna_overlap(
@@ -202,52 +165,45 @@ def annotate_lncrna(df: pd.DataFrame, lncrna_regions: dict) -> pd.DataFrame:
     )
     
     overlap_count = (df['lncRNA'] != '').sum()
-    print(f"  Found {overlap_count} variants overlapping lncRNA exons")
+    print(f"  Found {overlap_count} variants overlapping lncRNA exons", file=sys.stderr)
     
     return df
 
 
-# =============================================================================
-# Consensus/Known SNPs VCF Loading and Overlap Checking
-# =============================================================================
-
 def load_known_snps_vcf(vcf_file: str) -> dict:
-    """
-    Load consensus/known SNPs VCF file and organize by (chrom, pos) for lookup.
-    Returns a dictionary with (chrom, pos) as keys.
-    
-    Handles both FreeBayes and VarScan2 VCF formats.
-    """
     if not vcf_file:
         return None
     
-    print(f"Loading known SNPs VCF from {vcf_file}...")
+    print(f"Loading known SNPs VCF from {vcf_file}...", file=sys.stderr)
     
     vcf_variants = {}
     sample_names = []
+    line_count = 0
     
     try:
-        # Handle gzipped or plain VCF
-        opener = gzip.open if vcf_file.endswith('.gz') else open
+        if vcf_file.endswith('.gz'):
+            f = gzip.open(vcf_file, 'rt')
+        else:
+            f = open(vcf_file, 'r')
         
-        with opener(vcf_file, 'rt') as f:
+        with f:
             for line in f:
                 line = line.strip()
                 
                 if not line:
                     continue
                 
-                # Parse header to get sample names
                 if line.startswith('#CHROM'):
                     parts = line.split('\t')
                     if len(parts) > 9:
                         sample_names = parts[9:]
+                    print(f"  Found {len(sample_names)} samples in VCF header", file=sys.stderr)
                     continue
                 
-                # Skip other header lines
                 if line.startswith('#'):
                     continue
                 
+                line_count += 1
                 parts = line.split('\t')
                 if len(parts) < 8:
                     continue
@@ -261,7 +217,6 @@ def load_known_snps_vcf(vcf_file: str) -> dict:
                 filter_val = parts[6]
                 info = parts[7]
                 
-                # Parse INFO field into dict
                 info_dict = {}
                 for item in info.split(';'):
                     if '=' in item:
@@ -269,18 +224,6 @@ def load_known_snps_vcf(vcf_file: str) -> dict:
                         info_dict[key] = value
                     else:
                         info_dict[item] = 'True'
-                
-                # Count how many samples have the variant (non ./. genotypes)
-                samples_with_variant = 0
-                sample_genotypes = []
-                if len(parts) > 9:
-                    for sample_data in parts[9:]:
-                        gt = sample_data.split(':')[0] if sample_data else '.'
-                        if gt not in ['.', './.', '.|.']:
-                            sample_genotypes.append(gt)
-                            # Count samples with at least one alt allele
-                            if '1' in gt or '2' in gt:
-                                samples_with_variant += 1
                 
                 key = (chrom, pos)
                 vcf_variants[key] = {
@@ -292,45 +235,41 @@ def load_known_snps_vcf(vcf_file: str) -> dict:
                     'af': info_dict.get('AF', ''),
                     'dp': info_dict.get('DP', ''),
                     'type': info_dict.get('TYPE', ''),
-                    'ns': info_dict.get('NS', ''),           # Number of samples with data
-                    'ac': info_dict.get('AC', ''),           # Allele count
-                    'an': info_dict.get('AN', ''),           # Total alleles
-                    'samples_with_variant': samples_with_variant,
-                    'total_samples': len(sample_names)
+                    'ns': info_dict.get('NS', ''),
+                    'ac': info_dict.get('AC', ''),
+                    'an': info_dict.get('AN', ''),
                 }
         
-        print(f"  Loaded {len(vcf_variants)} variants from known SNPs VCF")
-        if sample_names:
-            print(f"  Samples in VCF: {len(sample_names)}")
+        print(f"  Parsed {line_count} variant lines", file=sys.stderr)
+        print(f"  Loaded {len(vcf_variants)} unique positions from known SNPs VCF", file=sys.stderr)
+        
+        if vcf_variants:
+            example_keys = list(vcf_variants.keys())[:3]
+            print(f"  Example positions: {example_keys}", file=sys.stderr)
         
         return vcf_variants
     
     except FileNotFoundError:
-        print(f"  Warning: Known SNPs VCF file not found: {vcf_file}")
+        print(f"  ERROR: Known SNPs VCF file not found: {vcf_file}", file=sys.stderr)
         return None
     except Exception as e:
-        print(f"  Warning: Error loading known SNPs VCF file: {e}")
+        print(f"  ERROR: Failed to load known SNPs VCF: {e}", file=sys.stderr)
         import traceback
-        traceback.print_exc()
+        traceback.print_exc(file=sys.stderr)
         return None
 
 
 def check_known_snp_overlap(chrom: str, pos: int, ref: str, alt: str, 
                             vcf_variants: dict) -> dict:
-    """
-    Check if a variant overlaps with one in the known SNPs VCF.
-    Returns a dictionary with annotation fields.
-    """
-    result = {
-        'known_snp_overlap': 'No',
-        'known_snp_ref': '',
-        'known_snp_alt': '',
-        'known_snp_qual': '',
-        'known_snp_af': '',
-        'known_snp_dp': '',
-        'known_snp_type': '',
-        'known_snp_ns': '',
-        'known_snp_match': ''
+    result = {'known_snp_overlap': 'No',
+            'known_snp_ref': '',
+            'known_snp_alt': '',
+            'known_snp_qual': '',
+            'known_snp_af': '',
+            'known_snp_dp': '',
+            'known_snp_type': '',
+            'known_snp_ns': '',
+            'known_snp_match': ''
     }
     
     if not vcf_variants:
@@ -349,7 +288,6 @@ def check_known_snp_overlap(chrom: str, pos: int, ref: str, alt: str,
         result['known_snp_type'] = variant['type']
         result['known_snp_ns'] = variant['ns']
         
-        # Determine match type
         vcf_alts = variant['alt'].split(',')
         if ref == variant['ref'] and alt in vcf_alts:
             result['known_snp_match'] = 'exact'
@@ -362,13 +300,16 @@ def check_known_snp_overlap(chrom: str, pos: int, ref: str, alt: str,
 
 
 def annotate_known_snps(df: pd.DataFrame, vcf_variants: dict) -> pd.DataFrame:
-    """Add known SNP annotation columns to dataframe based on coordinate overlap."""
     if vcf_variants is None:
+        print("  Skipping known SNP annotation (no variants loaded)", file=sys.stderr)
         return df
     
-    print("Annotating known SNP overlaps...")
+    print("Annotating known SNP overlaps...", file=sys.stderr)
     
-    # Apply the overlap check to each row
+    if len(df) > 0:
+        example_positions = list(zip(df['CHROM'].head(3), df['POS'].head(3)))
+        print(f"  Example input positions: {example_positions}", file=sys.stderr)
+    
     annotations = df.apply(
         lambda row: pd.Series(check_known_snp_overlap(
             str(row['CHROM']),
@@ -380,20 +321,15 @@ def annotate_known_snps(df: pd.DataFrame, vcf_variants: dict) -> pd.DataFrame:
         axis=1
     )
     
-    # Concatenate the new columns
     df = pd.concat([df, annotations], axis=1)
     
     overlap_count = (df['known_snp_overlap'] == 'Yes').sum()
     exact_match = (df['known_snp_match'] == 'exact').sum()
-    print(f"  Found {overlap_count} variants at known SNP positions")
-    print(f"  Of which {exact_match} are exact matches (same ref and alt)")
+    print(f"  Found {overlap_count} variants at known SNP positions", file=sys.stderr)
+    print(f"  Of which {exact_match} are exact matches (same ref and alt)", file=sys.stderr)
     
     return df
 
-
-# =============================================================================
-# Main Processing
-# =============================================================================
 
 def main():
     ap = argparse.ArgumentParser(
@@ -405,72 +341,77 @@ def main():
     ap.add_argument("--known_snps", help="Known SNPs/consensus VCF file", default=None)
     args = ap.parse_args()
 
-    print(f"\n{'='*60}")
-    print("VCF Processing Pipeline")
-    print(f"{'='*60}")
-    print(f"Input VCF: {args.input_vcf}")
-    print(f"Output CSV: {args.output_csv}")
-    if args.lncrna:
-        print(f"lncRNA reference: {args.lncrna}")
-    if args.known_snps:
-        print(f"Known SNPs VCF: {args.known_snps}")
-    print(f"{'='*60}\n")
+    print(f"\n{'='*60}", file=sys.stderr)
+    print("VCF Processing Pipeline", file=sys.stderr)
+    print(f"{'='*60}", file=sys.stderr)
+    print(f"Input VCF: {args.input_vcf}", file=sys.stderr)
+    print(f"Output CSV: {args.output_csv}", file=sys.stderr)
+    print(f"lncRNA reference: {args.lncrna}", file=sys.stderr)
+    print(f"Known SNPs VCF: {args.known_snps}", file=sys.stderr)
+    print(f"{'='*60}\n", file=sys.stderr)
 
-    # Load reference files first
-    lncrna_regions = load_lncrna_reference(args.lncrna) if args.lncrna else None
-    known_snps = load_known_snps_vcf(args.known_snps) if args.known_snps else None
+    known_snps_path = args.known_snps
+    if known_snps_path:
+        basename = os.path.basename(known_snps_path)
+        if basename.startswith('NO_FILE') or not os.path.exists(known_snps_path):
+            print(f"  Known SNPs file is placeholder or doesn't exist, skipping", file=sys.stderr)
+            known_snps_path = None
+        elif os.path.getsize(known_snps_path) == 0:
+            print(f"  Known SNPs file is empty, skipping", file=sys.stderr)
+            known_snps_path = None
 
-    # Read and process input VCF
-    print(f"\nReading input VCF: {args.input_vcf}")
+    lncrna_path = args.lncrna
+    if lncrna_path:
+        basename = os.path.basename(lncrna_path)
+        if basename.startswith('NO_FILE') or not os.path.exists(lncrna_path):
+            print(f"  lncRNA file is placeholder or doesn't exist, skipping", file=sys.stderr)
+            lncrna_path = None
+        elif os.path.getsize(lncrna_path) == 0:
+            print(f"  lncRNA file is empty, skipping", file=sys.stderr)
+            lncrna_path = None
+
+    lncrna_regions = load_lncrna_reference(lncrna_path) if lncrna_path else None
+    known_snps = load_known_snps_vcf(known_snps_path) if known_snps_path else None
+
+    print(f"Reading input VCF: {args.input_vcf}", file=sys.stderr)
     df = read_vcf_to_df(args.input_vcf)
-    print(f"  Loaded {len(df)} variants")
+    print(f"  Loaded {len(df)} variants", file=sys.stderr)
 
-    # Split INFO column
     if "INFO" in df.columns:
         df = split_info_column(df)
         
-        # Parse SnpEff annotations if present
         if "ANN" in df.columns:
-            print("Parsing SnpEff annotations...")
+            print("Parsing SnpEff annotations...", file=sys.stderr)
             ann_df = df["ANN"].apply(parse_snpeff_ann_first)
             df = pd.concat([df, ann_df], axis=1)
 
-    # Parse FORMAT/sample columns
     if all(c in df.columns for c in ["FORMAT", "NORMAL", "TUMOR"]):
-        print("Parsing sample genotype data...")
+        print("Parsing sample genotype data...", file=sys.stderr)
         format_df = df.apply(
             lambda row: parse_format_row(row["FORMAT"], row["NORMAL"], row["TUMOR"]),
             axis=1
         )
         df = pd.concat([df.drop(columns=["FORMAT", "NORMAL", "TUMOR"]), format_df], axis=1)
 
-    # Add lncRNA annotations
     if lncrna_regions:
         df = annotate_lncrna(df, lncrna_regions)
 
-    # Add known SNP annotations
     if known_snps:
         df = annotate_known_snps(df, known_snps)
+    else:
+        print("  No known SNPs data available for annotation", file=sys.stderr)
 
-    # Drop unwanted columns
     drop_cols = ["ID", "QUAL", "GPV", "FILTER", "SOMATIC", "GQ_normal", "GQ_tumor"]
     df = df.drop(columns=[c for c in drop_cols if c in df.columns], errors="ignore")
 
-    # Write output
-    print(f"\nWriting output to: {args.output_csv}")
+    print(f"\nWriting output to: {args.output_csv}", file=sys.stderr)
     df.to_csv(args.output_csv, index=False)
-    print(f"  Wrote {len(df)} rows with {len(df.columns)} columns")
+    print(f"  Wrote {len(df)} rows with {len(df.columns)} columns", file=sys.stderr)
+    print(f"  Columns: {list(df.columns)}", file=sys.stderr)
     
-    # Print column summary
-    print(f"\nOutput columns: {', '.join(df.columns[:10])}...")
-    if 'lncRNA' in df.columns:
-        print(f"  lncRNA column included")
-    if 'known_snp_overlap' in df.columns:
-        print(f"  Known SNP columns included")
-    
-    print(f"\n{'='*60}")
-    print("Processing complete!")
-    print(f"{'='*60}\n")
+    print(f"\n{'='*60}", file=sys.stderr)
+    print("Processing complete!", file=sys.stderr)
+    print(f"{'='*60}\n", file=sys.stderr)
     
     return 0
 
