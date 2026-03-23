@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RNA-seq Variant Calling Pipeline</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0b0f1a;
+    --surface: #111827;
+    --surface2: #1a2236;
+    --border: rgba(255,255,255,0.07);
+    --teal: #14b8a6;
+    --teal-dim: rgba(20,184,166,0.15);
+    --teal-glow: rgba(20,184,166,0.35);
+    --purple: #818cf8;
+    --purple-dim: rgba(129,140,248,0.15);
+    --amber: #f59e0b;
+    --amber-dim: rgba(245,158,11,0.15);
+    --gray: #6b7280;
+    --gray-dim: rgba(107,114,128,0.12);
+    --text: #e2e8f0;
+    --text-muted: #64748b;
+    --text-dim: #94a3b8;
+    --red: #f87171;
+    --green: #4ade80;
+    --connector: rgba(20,184,166,0.3);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    font-family: 'DM Sans', sans-serif;
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Subtle grid bg */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .header {
+    position: relative;
+    z-index: 10;
+    padding: 40px 48px 20px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .header-left h1 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--teal);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+
+  .header-left h2 {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 28px;
+    font-weight: 300;
+    color: var(--text);
+    letter-spacing: -0.02em;
+  }
+
+  .header-left h2 span { font-weight: 500; }
+
+  .header-right {
+    display: flex;
+    gap: 20px;
+    align-items: center;
+    padding-bottom: 4px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .legend-dot {
+    width: 8px; height: 8px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  .canvas-wrap {
+    position: relative;
+    z-index: 1;
+    padding: 48px 48px 64px;
+    overflow-x: auto;
+  }
+
+  svg#flow {
+    display: block;
+    overflow: visible;
+  }
+
+  /* Node styles */
+  .node-group { cursor: pointer; }
+  .node-group:hover .node-rect { filter: brightness(1.15); }
+  .node-group:hover .node-label { fill: #fff; }
+
+  .node-rect {
+    transition: filter 0.2s, stroke-opacity 0.2s;
+  }
+
+  .node-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    font-weight: 500;
+    fill: var(--text);
+    transition: fill 0.2s;
+  }
+
+  .node-sublabel {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 10px;
+    font-weight: 400;
+    fill: var(--text-muted);
+  }
+
+  .phase-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .edge {
+    fill: none;
+    stroke: var(--connector);
+    stroke-width: 1.5;
+    marker-end: url(#arrowhead);
+  }
+
+  .edge-split {
+    fill: none;
+    stroke: rgba(245,158,11,0.35);
+    stroke-width: 1.5;
+    stroke-dasharray: 5 4;
+    marker-end: url(#arrowhead-amber);
+  }
+
+  .edge-merge {
+    fill: none;
+    stroke: rgba(129,140,248,0.35);
+    stroke-width: 1.5;
+    marker-end: url(#arrowhead-purple);
+  }
+
+  .edge-collect {
+    fill: none;
+    stroke: rgba(107,114,128,0.25);
+    stroke-width: 1;
+    stroke-dasharray: 3 4;
+    marker-end: url(#arrowhead-gray);
+  }
+
+  .tooltip {
+    position: fixed;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+    max-width: 220px;
+    line-height: 1.6;
+    z-index: 999;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+
+  .tooltip.visible { opacity: 1; }
+  .tooltip strong { color: var(--teal); display: block; margin-bottom: 3px; font-size: 12px; }
+
+  .stats-bar {
+    position: relative;
+    z-index: 10;
+    display: flex;
+    gap: 0;
+    border-top: 1px solid var(--border);
+    padding: 0 48px;
+  }
+
+  .stat {
+    padding: 16px 28px 16px 0;
+    margin-right: 28px;
+    border-right: 1px solid var(--border);
+  }
+  .stat:last-child { border-right: none; }
+
+  .stat-val {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--teal);
+    line-height: 1;
+    margin-bottom: 3px;
+  }
+
+  .stat-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    letter-spacing: 0.04em;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <h1>Nextflow DSL2 · RNA-seq Somatic</h1>
+    <h2>Variant <span>Calling Pipeline</span></h2>
+  </div>
+  <div class="header-right">
+    <div class="legend-item"><div class="legend-dot" style="background:#14b8a6"></div>Processing</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#818cf8"></div>Variant calling</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div>Branch / merge</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#4b5563"></div>QC / reporting</div>
+  </div>
+</div>
+
+<div class="canvas-wrap">
+<svg id="flow" width="1200" height="1540" viewBox="0 0 1200 1540">
+  <defs>
+    <marker id="arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M1 1L9 5L1 9" fill="none" stroke="rgba(20,184,166,0.6)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arrowhead-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M1 1L9 5L1 9" fill="none" stroke="rgba(245,158,11,0.7)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arrowhead-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M1 1L9 5L1 9" fill="none" stroke="rgba(129,140,248,0.7)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arrowhead-gray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M1 1L9 5L1 9" fill="none" stroke="rgba(107,114,128,0.5)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <filter id="glow-teal">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- ============================================================
+       PHASE LABELS (vertical sidebar)
+  ============================================================ -->
+
+  <!-- Phase: Input -->
+  <text x="28" y="130" class="phase-label" fill="rgba(20,184,166,0.5)" transform="rotate(-90,28,130)">Input</text>
+
+  <!-- Phase: QC -->
+  <text x="28" y="340" class="phase-label" fill="rgba(107,114,128,0.5)" transform="rotate(-90,28,340)">QC</text>
+
+  <!-- Phase: Alignment -->
+  <text x="28" y="530" class="phase-label" fill="rgba(20,184,166,0.5)" transform="rotate(-90,28,530)">Align</text>
+
+  <!-- Phase: Variant Calling -->
+  <text x="28" y="1050" class="phase-label" fill="rgba(129,140,248,0.5)" transform="rotate(-90,28,1050)">Variant Calling</text>
+
+  <!-- Phase: Annotation -->
+  <text x="28" y="1370" class="phase-label" fill="rgba(20,184,166,0.5)" transform="rotate(-90,28,1370)">Annotate / Output</text>
+
+  <!-- Thin phase separator lines -->
+  <line x1="56" y1="170" x2="1170" y2="170" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+  <line x1="56" y1="390" x2="1170" y2="390" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+  <line x1="56" y1="600" x2="1170" y2="600" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+  <line x1="56" y1="1130" x2="1170" y2="1130" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+  <line x1="56" y1="1290" x2="1170" y2="1290" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+
+  <!-- ============================================================
+       ROW 1: Samplesheet input  (y=100)
+  ============================================================ -->
+  <!-- Samplesheet -->
+  <g class="node-group" data-tip="CSV samplesheet with name, read1, read2 columns. Parsed via splitCsv() into reads_ch channel." data-module="">
+    <rect class="node-rect" x="460" y="82" width="200" height="46" rx="8"
+      fill="rgba(20,184,166,0.08)" stroke="rgba(20,184,166,0.4)" stroke-width="1"/>
+    <text class="node-label" x="560" y="101" text-anchor="middle">samplesheet.csv</text>
+    <text class="node-sublabel" x="560" y="117" text-anchor="middle">Channel.fromPath → splitCsv</text>
+  </g>
+
+  <!-- ============================================================
+       ROW 2: FASTQC + STAR_INDEX + PICARD_CREATE_DICT  (y=200)
+  ============================================================ -->
+
+  <!-- Down from samplesheet to FASTQC -->
+  <path class="edge" d="M560,128 L560,192"/>
+
+  <!-- FASTQC -->
+  <g class="node-group" data-tip="FastQC: per-read quality metrics. Output .zip collected into MultiQC." data-module="modules/fastqc">
+    <rect class="node-rect" x="84" y="192" width="160" height="46" rx="8"
+      fill="rgba(107,114,128,0.1)" stroke="rgba(107,114,128,0.45)" stroke-width="1"/>
+    <text class="node-label" x="164" y="211" text-anchor="middle">FASTQC</text>
+    <text class="node-sublabel" x="164" y="227" text-anchor="middle">per-sample QC reads</text>
+  </g>
+
+  <!-- Arrow: samplesheet → FASTQC (branch left) -->
+  <path class="edge" d="M560,128 C560,155 164,165 164,192"/>
+
+  <!-- STAR_INDEX (conditional) -->
+  <g class="node-group" data-tip="Builds STAR genome index from ref_genome + GTF. Skipped if params.star_index already exists." data-module="modules/star_index">
+    <rect class="node-rect" x="460" y="192" width="200" height="46" rx="8"
+      fill="rgba(20,184,166,0.08)" stroke="rgba(20,184,166,0.35)" stroke-width="1" stroke-dasharray="5 3"/>
+    <text class="node-label" x="560" y="211" text-anchor="middle">STAR_INDEX</text>
+    <text class="node-sublabel" x="560" y="227" text-anchor="middle">optional · if no cached index</text>
+  </g>
+
+  <!-- Arrow down to STAR_INDEX -->
+  <path class="edge" d="M560,128 L560,192"/>
+
+  <!-- PICARD_CREATE_DICT (conditional) -->
+  <g class="node-group" data-tip="Creates .dict sequence dictionary from ref_genome. Skipped if params.fa_dict exists." data-module="modules/picard_create_dict">
+    <rect class="node-rect" x="900" y="192" width="220" height="46" rx="8"
+      fill="rgba(20,184,166,0.08)" stroke="rgba(20,184,166,0.35)" stroke-width="1" stroke-dasharray="5 3"/>
+    <text class="node-label" x="1010" y="211" text-anchor="middle">PICARD_CREATE_DICT</text>
+    <text class="node-sublabel" x="1010" y="227" text-anchor="middle">optional · .dict from ref_genome</text>
+  </g>
+
+  <!-- Arrow: samplesheet → PICARD -->
+  <path class="edge" d="M560,128 C560,155 1010,165 1010,192"/>
+
+  <!-- ============================================================
+       ROW 3: STAR_ALIGN  (y=320)
+  ============================================================ -->
+
+  <!-- Arrows into STAR_ALIGN -->
+  <path class="edge" d="M560,238 L560,312"/>
+  <path class="edge" d="M164,238 C164,270 480,300 540,312"/>
+
+  <!-- STAR_ALIGN -->
+  <g class="node-group" data-tip="Splice-aware alignment of paired-end reads to genome. Outputs sorted BAM." data-module="modules/star_align">
+    <rect class="node-rect" x="460" y="312" width="200" height="46" rx="8"
+      fill="rgba(20,184,166,0.12)" stroke="rgba(20,184,166,0.5)" stroke-width="1.5"/>
+    <text class="node-label" x="560" y="331" text-anchor="middle">STAR_ALIGN</text>
+    <text class="node-sublabel" x="560" y="347" text-anchor="middle">splice-aware · paired-end</text>
+  </g>
+
+  <!-- ============================================================
+       ROW 4: SAMTOOLS_FLAGSTAT + GTF conversions  (y=440)
+  ============================================================ -->
+
+  <!-- Arrow STAR_ALIGN → SAMTOOLS_FLAGSTAT -->
+  <path class="edge" d="M540,358 C430,380 220,415 220,432"/>
+
+  <!-- SAMTOOLS_FLAGSTAT -->
+  <g class="node-group" data-tip="Alignment statistics per BAM. Output fed into MultiQC." data-module="modules/samtools_flagstat">
+    <rect class="node-rect" x="84" y="432" width="200" height="46" rx="8"
+      fill="rgba(107,114,128,0.1)" stroke="rgba(107,114,128,0.45)" stroke-width="1"/>
+    <text class="node-label" x="184" y="451" text-anchor="middle">SAMTOOLS_FLAGSTAT</text>
+    <text class="node-sublabel" x="184" y="467" text-anchor="middle">alignment stats → MultiQC</text>
+  </g>
+
+  <!-- GTF_TO_REFFLAT -->
+  <g class="node-group" data-tip="Converts GTF to refFlat format for Picard RNA metrics." data-module="modules/gtf_to_refflat">
+    <rect class="node-rect" x="460" y="432" width="190" height="46" rx="8"
+      fill="rgba(20,184,166,0.08)" stroke="rgba(20,184,166,0.3)" stroke-width="1"/>
+    <text class="node-label" x="555" y="451" text-anchor="middle">GTF_TO_REFFLAT</text>
+    <text class="node-sublabel" x="555" y="467" text-anchor="middle">GTF → refFlat</text>
+  </g>
+
+  <!-- GTF_TO_RRNA_BED -->
+  <g class="node-group" data-tip="Extracts rRNA intervals from GTF → BED. Currently blank for mm9 (no rRNA in GTF)." data-module="modules/gtf_to_rrna_bed">
+    <rect class="node-rect" x="700" y="432" width="190" height="46" rx="8"
+      fill="rgba(20,184,166,0.08)" stroke="rgba(20,184,166,0.3)" stroke-width="1"/>
+    <text class="node-label" x="795" y="451" text-anchor="middle">GTF_TO_RRNA_BED</text>
+    <text class="node-sublabel" x="795" y="467" text-anchor="middle">rRNA intervals · mm9 blank</text>
+  </g>
+
+  <!-- Arrows STAR_ALIGN → GTF processes -->
+  <path class="edge" d="M555,358 L555,432"/>
+  <path class="edge" d="M570,358 C650,395 750,415 795,432"/>
+
+  <!-- ============================================================
+       ROW 5: BED_TO_INTERVAL_LIST  (y=545)
+  ============================================================ -->
+
+  <!-- BED_TO_INTERVAL_LIST -->
+  <g class="node-group" data-tip="Converts rRNA BED + .dict → Picard interval list format." data-module="modules/bed_to_interval_list">
+    <rect class="node-rect" x="620" y="544" width="220" height="46" rx="8"
+      fill="rgba(20,184,166,0.08)" stroke="rgba(20,184,166,0.3)" stroke-width="1"/>
+    <text class="node-label" x="730" y="563" text-anchor="middle">BED_TO_INTERVAL_LIST</text>
+    <text class="node-sublabel" x="730" y="579" text-anchor="middle">BED + .dict → intervals</text>
+  </g>
+
+  <!-- Arrows into BED_TO_INTERVAL_LIST -->
+  <path class="edge" d="M795,478 L795,544 L840,544"/>
+  <path class="edge" d="M1010,238 C1010,490 840,540 840,544"/>
+
+  <!-- ============================================================
+       ROW 6: PICARD_COLLECT_RNASEQ_METRICS  (y=660)
+  ============================================================ -->
+
+  <!-- PICARD_COLLECT_RNASEQ_METRICS -->
+  <g class="node-group" data-tip="Collects per-sample RNA-seq metrics: strand balance, rRNA rate, coverage uniformity." data-module="modules/picard_collect_rnaseq_metrics">
+    <rect class="node-rect" x="400" y="652" width="260" height="46" rx="8"
+      fill="rgba(107,114,128,0.1)" stroke="rgba(107,114,128,0.45)" stroke-width="1"/>
+    <text class="node-label" x="530" y="671" text-anchor="middle">PICARD_COLLECT_RNASEQ_METRICS</text>
+    <text class="node-sublabel" x="530" y="687" text-anchor="middle">strand, rRNA rate, coverage</text>
+  </g>
+
+  <!-- Arrows in -->
+  <path class="edge" d="M560,358 C560,600 490,645 490,652"/>
+  <path class="edge" d="M555,478 C555,600 530,645 530,652"/>
+  <path class="edge" d="M730,590 C680,620 570,645 570,652"/>
+
+  <!-- ============================================================
+       ROW 7: MULTIQC  (y=770)
+  ============================================================ -->
+
+  <!-- MULTIQC -->
+  <g class="node-group" data-tip="Aggregates FastQC, flagstat, and Picard metrics into a single HTML report." data-module="modules/multiqc">
+    <rect class="node-rect" x="460" y="762" width="200" height="46" rx="8"
+      fill="rgba(107,114,128,0.13)" stroke="rgba(107,114,128,0.5)" stroke-width="1.5"/>
+    <text class="node-label" x="560" y="781" text-anchor="middle">MULTIQC</text>
+    <text class="node-sublabel" x="560" y="797" text-anchor="middle">aggregate QC report</text>
+  </g>
+
+  <!-- Arrows into MULTIQC (collect) -->
+  <path class="edge-collect" d="M184,478 C184,730 480,758 480,762"/>
+  <path class="edge-collect" d="M184,478 C184,730 480,758 480,762"/>
+  <path class="edge-collect" d="M530,698 C530,730 530,755 530,762"/>
+  <path class="edge-collect" d="M184,478 C184,750 520,758 520,762"/>
+
+  <!-- ============================================================
+       ROW 8: SAMTOOLS_SORT → BAM_INDEX  (y=550 right lane)
+  ============================================================ -->
+
+  <!-- SAMTOOLS_SORT -->
+  <g class="node-group" data-tip="Coordinate-sorts BAM for downstream variant calling." data-module="modules/samtools_sort">
+    <rect class="node-rect" x="84" y="544" width="180" height="46" rx="8"
+      fill="rgba(20,184,166,0.08)" stroke="rgba(20,184,166,0.35)" stroke-width="1"/>
+    <text class="node-label" x="174" y="563" text-anchor="middle">SAMTOOLS_SORT</text>
+    <text class="node-sublabel" x="174" y="579" text-anchor="middle">coordinate sort BAM</text>
+  </g>
+
+  <!-- BAM_INDEX -->
+  <g class="node-group" data-tip="Indexes sorted BAM with samtools index → .bai file." data-module="modules/bam_index">
+    <rect class="node-rect" x="84" y="652" width="180" height="46" rx="8"
+      fill="rgba(20,184,166,0.08)" stroke="rgba(20,184,166,0.35)" stroke-width="1"/>
+    <text class="node-label" x="174" y="671" text-anchor="middle">BAM_INDEX</text>
+    <text class="node-sublabel" x="174" y="687" text-anchor="middle">samtools index → .bai</text>
+  </g>
+
+  <path class="edge" d="M560,358 C400,390 174,530 174,544"/>
+  <path class="edge" d="M174,590 L174,652"/>
+
+  <!-- ============================================================
+       ROW 9: BRANCH (Control vs Experimental)  (y=770)
+  ============================================================ -->
+
+  <!-- Branch box -->
+  <g class="node-group" data-tip="Splits BAM_INDEX output: Control samples → merged pool; experimental → per-sample variant calling." data-module="">
+    <rect class="node-rect" x="84" y="762" width="180" height="46" rx="8"
+      fill="rgba(245,158,11,0.1)" stroke="rgba(245,158,11,0.5)" stroke-width="1.5"/>
+    <text class="node-label" x="174" y="779" fill="#f59e0b" text-anchor="middle">BRANCH</text>
+    <text class="node-sublabel" x="174" y="795" text-anchor="middle">Control vs Experimental</text>
+  </g>
+
+  <path class="edge" d="M174,698 L174,762"/>
+
+  <!-- ============================================================
+       ROW 10: MERGE_BAMS  (y=880, left)
+  ============================================================ -->
+
+  <!-- MERGE_BAMS -->
+  <g class="node-group" data-tip="Merges all Control BAMs into a single merged_controls BAM for somatic calling." data-module="modules/merge_bams">
+    <rect class="node-rect" x="84" y="870" width="180" height="46" rx="8"
+      fill="rgba(245,158,11,0.1)" stroke="rgba(245,158,11,0.45)" stroke-width="1"/>
+    <text class="node-label" x="174" y="889" text-anchor="middle">MERGE_BAMS</text>
+    <text class="node-sublabel" x="174" y="905" text-anchor="middle">pool all controls</text>
+  </g>
+
+  <path class="edge-split" d="M174,808 L174,870"/>
+
+  <!-- ============================================================
+       ROW 10: SAMTOOLS_PILEUP  (y=880 right lane, but center)
+  ============================================================ -->
+
+  <!-- SAMTOOLS_PILEUP -->
+  <g class="node-group" data-tip="Generates pileup from experimental BAM paired with merged control BAM." data-module="modules/samtools_pileup">
+    <rect class="node-rect" x="400" y="870" width="200" height="46" rx="8"
+      fill="rgba(20,184,166,0.1)" stroke="rgba(20,184,166,0.45)" stroke-width="1.5"/>
+    <text class="node-label" x="500" y="889" text-anchor="middle">SAMTOOLS_PILEUP</text>
+    <text class="node-sublabel" x="500" y="905" text-anchor="middle">exp BAM + control BAM</text>
+  </g>
+
+  <!-- Arrows: branch exp → pileup, merge_bams → pileup -->
+  <path class="edge-split" d="M254,785 C340,785 400,860 430,870"/>
+  <path class="edge-merge" d="M264,893 C310,893 360,893 400,893"/>
+
+  <!-- ============================================================
+       ROW 11: BRANCH Tumor vs NonTumor  (y=990)
+  ============================================================ -->
+
+  <g class="node-group" data-tip="Branches pileup output by sample type: Tumor → VARSCAN_TUMOR; other → VARSCAN_NONTUMOR." data-module="">
+    <rect class="node-rect" x="400" y="980" width="200" height="46" rx="8"
+      fill="rgba(245,158,11,0.1)" stroke="rgba(245,158,11,0.5)" stroke-width="1.5"/>
+    <text class="node-label" x="500" y="997" fill="#f59e0b" text-anchor="middle">BRANCH</text>
+    <text class="node-sublabel" x="500" y="1013" text-anchor="middle">Tumor vs Non-tumor</text>
+  </g>
+
+  <path class="edge" d="M500,916 L500,980"/>
+
+  <!-- ============================================================
+       ROW 12: VARSCAN_TUMOR + VARSCAN_NONTUMOR  (y=1100)
+  ============================================================ -->
+
+  <!-- VARSCAN_TUMOR -->
+  <g class="node-group" data-tip="VarScan somatic: tumor sample vs merged control. Calls SNPs + indels." data-module="modules/varscan_somatic_tumor">
+    <rect class="node-rect" x="560" y="1092" width="200" height="46" rx="8"
+      fill="rgba(129,140,248,0.12)" stroke="rgba(129,140,248,0.5)" stroke-width="1.5"/>
+    <text class="node-label" x="660" y="1111" text-anchor="middle">VARSCAN_TUMOR</text>
+    <text class="node-sublabel" x="660" y="1127" text-anchor="middle">somatic SNP + indel</text>
+  </g>
+
+  <!-- VARSCAN_NONTUMOR -->
+  <g class="node-group" data-tip="VarScan somatic: non-tumor experimental vs control. Calls SNPs + indels." data-module="modules/varscan_somatic_nontumor">
+    <rect class="node-rect" x="240" y="1092" width="220" height="46" rx="8"
+      fill="rgba(129,140,248,0.12)" stroke="rgba(129,140,248,0.5)" stroke-width="1.5"/>
+    <text class="node-label" x="350" y="1111" text-anchor="middle">VARSCAN_NONTUMOR</text>
+    <text class="node-sublabel" x="350" y="1127" text-anchor="middle">somatic SNP + indel</text>
+  </g>
+
+  <!-- Arrows from branch -->
+  <path class="edge-split" d="M470,1026 C380,1050 310,1080 310,1092"/>
+  <path class="edge-split" d="M530,1026 C600,1050 660,1080 660,1092"/>
+
+  <!-- ============================================================
+       ROW 13: FILTER_VARIANTS  (y=1210)
+  ============================================================ -->
+
+  <!-- FILTER_VARIANTS -->
+  <g class="node-group" data-tip="Filters VarScan VCF output. SNPs and indels from both tumor and non-tumor are mixed and filtered." data-module="modules/filter_variants">
+    <rect class="node-rect" x="400" y="1200" width="200" height="46" rx="8"
+      fill="rgba(129,140,248,0.12)" stroke="rgba(129,140,248,0.5)" stroke-width="1.5"/>
+    <text class="node-label" x="500" y="1219" text-anchor="middle">FILTER_VARIANTS</text>
+    <text class="node-sublabel" x="500" y="1235" text-anchor="middle">VCF quality filters</text>
+  </g>
+
+  <!-- Mix arrows from both varscan -->
+  <path class="edge-merge" d="M350,1138 C350,1170 450,1192 460,1200"/>
+  <path class="edge-merge" d="M660,1138 C660,1170 550,1192 540,1200"/>
+
+  <!-- ============================================================
+       ROW 14: BUILD_SNPEFF_DB + ANNOTATE_VARIANTS  (y=1310)
+  ============================================================ -->
+
+  <!-- BUILD_SNPEFF_DB -->
+  <g class="node-group" data-tip="Builds a custom SnpEff database from ref_genome + GTF for annotation." data-module="modules/build_snpeff_db">
+    <rect class="node-rect" x="720" y="1300" width="200" height="46" rx="8"
+      fill="rgba(20,184,166,0.08)" stroke="rgba(20,184,166,0.35)" stroke-width="1"/>
+    <text class="node-label" x="820" y="1319" text-anchor="middle">BUILD_SNPEFF_DB</text>
+    <text class="node-sublabel" x="820" y="1335" text-anchor="middle">custom annotation DB</text>
+  </g>
+
+  <!-- ANNOTATE_VARIANTS -->
+  <g class="node-group" data-tip="Annotates filtered VCF with SnpEff functional predictions (missense, nonsense, etc.)." data-module="modules/annotate_variants">
+    <rect class="node-rect" x="400" y="1300" width="200" height="46" rx="8"
+      fill="rgba(20,184,166,0.12)" stroke="rgba(20,184,166,0.5)" stroke-width="1.5"/>
+    <text class="node-label" x="500" y="1319" text-anchor="middle">ANNOTATE_VARIANTS</text>
+    <text class="node-sublabel" x="500" y="1335" text-anchor="middle">SnpEff functional impact</text>
+  </g>
+
+  <path class="edge" d="M500,1246 L500,1300"/>
+  <path class="edge" d="M820,1246 L820,1300 L600,1300"/>
+  <!-- phantom arrow so BUILD_SNPEFF_DB seems to come from params -->
+  <path class="edge" d="M500,1246 C650,1270 750,1295 820,1300"/>
+
+  <!-- ============================================================
+       ROW 15: PROCESS_VCFS  (y=1410)
+  ============================================================ -->
+
+  <!-- PROCESS_VCFS -->
+  <g class="node-group" data-tip="Processes annotated VCFs: filters against lncRNA reference and known SNPs VCF (both optional)." data-module="modules/process_vcfs">
+    <rect class="node-rect" x="400" y="1400" width="200" height="46" rx="8"
+      fill="rgba(20,184,166,0.12)" stroke="rgba(20,184,166,0.5)" stroke-width="1.5"/>
+    <text class="node-label" x="500" y="1419" text-anchor="middle">PROCESS_VCFS</text>
+    <text class="node-sublabel" x="500" y="1435" text-anchor="middle">lncRNA + known SNP filter</text>
+  </g>
+
+  <path class="edge" d="M500,1346 L500,1400"/>
+
+  <!-- ============================================================
+       ROW 16: CREATE_OUTPUT  (y=1490)
+  ============================================================ -->
+
+  <!-- CREATE_OUTPUT -->
+  <g class="node-group" data-tip="Groups SNP + indel CSVs by replicate, sorts by replicate number, and generates final output tables." data-module="modules/create_output">
+    <rect class="node-rect" x="400" y="1483" width="200" height="46" rx="8"
+      fill="rgba(20,184,166,0.15)" stroke="rgba(20,184,166,0.6)" stroke-width="2"/>
+    <text class="node-label" x="500" y="1502" text-anchor="middle">CREATE_OUTPUT</text>
+    <text class="node-sublabel" x="500" y="1518" text-anchor="middle">grouped SNP + indel tables</text>
+  </g>
+
+  <path class="edge" d="M500,1446 L500,1483"/>
+
+</svg>
+</div>
+
+<div class="stats-bar">
+  <div class="stat">
+    <div class="stat-val">21</div>
+    <div class="stat-label">modules</div>
+  </div>
+  <div class="stat">
+    <div class="stat-val">2</div>
+    <div class="stat-label">branch points</div>
+  </div>
+  <div class="stat">
+    <div class="stat-val">4</div>
+    <div class="stat-label">optional steps</div>
+  </div>
+  <div class="stat">
+    <div class="stat-val">SNP + indel</div>
+    <div class="stat-label">variant types</div>
+  </div>
+  <div class="stat">
+    <div class="stat-val">Nextflow DSL2</div>
+    <div class="stat-label">framework</div>
+  </div>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+  const tooltip = document.getElementById('tooltip');
+  let hideTimer;
+
+  document.querySelectorAll('.node-group').forEach(node => {
+    const tip = node.dataset.tip;
+    const mod = node.dataset.module;
+    if (!tip) return;
+
+    node.addEventListener('mouseenter', (e) => {
+      clearTimeout(hideTimer);
+      tooltip.innerHTML = mod
+        ? `<strong>${mod}</strong>${tip}`
+        : tip;
+      tooltip.classList.add('visible');
+    });
+
+    node.addEventListener('mousemove', (e) => {
+      tooltip.style.left = (e.clientX + 16) + 'px';
+      tooltip.style.top  = (e.clientY - 10) + 'px';
+    });
+
+    node.addEventListener('mouseleave', () => {
+      hideTimer = setTimeout(() => tooltip.classList.remove('visible'), 120);
+    });
+  });
+
+  // Subtle entrance animation
+  const nodes = document.querySelectorAll('.node-group');
+  nodes.forEach((n, i) => {
+    n.style.opacity = '0';
+    n.style.transform = 'translateY(8px)';
+    n.style.transition = `opacity 0.4s ease ${i * 0.03}s, transform 0.4s ease ${i * 0.03}s`;
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        n.style.opacity = '1';
+        n.style.transform = 'translateY(0)';
+      }, 50);
+    });
+  });
+</script>
+</body>
+</html>
