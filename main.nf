@@ -19,6 +19,7 @@ include {BUILD_SNPEFF_DB} from './modules/build_snpeff_db'
 include {ANNOTATE_VARIANTS} from './modules/annotate_variants'
 include {PROCESS_VCFS} from './modules/process_vcfs'
 include {CREATE_OUTPUT} from './modules/create_output'
+include {CSV_TO_XLSX} from './modules/csv_to_xlsx'
 
 workflow {
     Channel.fromPath(params.samplesheet)
@@ -51,10 +52,12 @@ workflow {
 
     GTF_TO_REFFLAT(params.gtf)
 
+    // This is currently blank because there is no rRNA inside the mm9 GTF file, ask max about this once I have a better idea
     GTF_TO_RRNA_BED(params.gtf)
     
     BED_TO_INTERVAL_LIST(GTF_TO_RRNA_BED.out.bed, fa_dict_ch)
 
+    // Picard RNA metrics per sample
     PICARD_COLLECT_RNASEQ_METRICS(
       STAR_ALIGN.out.bam,
       GTF_TO_REFFLAT.out.refflat,
@@ -67,6 +70,8 @@ workflow {
         .mix(SAMTOOLS_FLAGSTAT.out)
         .mix(PICARD_COLLECT_RNASEQ_METRICS.out.metrics)
         .collect()
+
+    //multiqc_ch.view()
     
     MULTIQC(multiqc_ch)
 
@@ -137,29 +142,30 @@ workflow {
     PROCESS_VCFS(ANNOTATE_VARIANTS.out, lncrna_ch, known_snps_ch)
 
     def groupParts = { String id ->
-        def core = id.replaceFirst(/_(snp|indel)$/, '')
-        def m = (core =~ /^(.*?)(\d+)$/)
+        // id examples: control_vs_aHepGHRkd_Stat5bCA4_indel  OR  control_vs_aHepGHRkd3_snp
+        def core = id.replaceFirst(/_(snp|indel)$/, '')   // drop _snp/_indel
+        def m = (core =~ /^(.*?)(\d+)$/)                 // trailing digits at end
         if( m.matches() ) {
-            return [ m[0][1], (m[0][2] as Integer) ]
+            return [ m[0][1], (m[0][2] as Integer) ]     // [groupPrefix, replicateNum]
         } else {
-            return [ core, Integer.MAX_VALUE ]
+            return [ core, Integer.MAX_VALUE ]           // no replicate number
         }
     }
 
     def grouped = PROCESS_VCFS.out
         .map { id, csv ->
             def (grp, num) = groupParts(id)
-            tuple(grp, num, id, csv)
+            tuple(grp, num, id, csv)   // (group, num, full_id, file)
         }
 
     snp_by_group = grouped
         .filter { grp, num, id, csv -> id.endsWith('snp') }
-        .map { grp, num, id, csv -> tuple(grp, num, csv) }
+        .map { grp, num, id, csv -> tuple(grp, num, csv) }      // (group, num, file)
         .groupTuple()
         .map { grp, nums, files ->
             def ordered = [nums, files].transpose()
                 .sort { it[0] }
-                .collect { it[1] }
+                .collect { it[1] }                              // List<Path>
             tuple(grp, ordered)
         }
 
@@ -179,4 +185,8 @@ workflow {
         .map { grp, indels, snps -> tuple(grp, indels, snps) }
 
     CREATE_OUTPUT(paired)
+
+    individuals_excel_ch = paired.map { id, file1, file2 -> [file1, file2] }.flatten()
+
+    CSV_TO_XLSX(individuals_excel_ch)
 }
