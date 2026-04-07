@@ -24,14 +24,3 @@ process PROCESS_VCFS {
     touch ${sample}.processed.csv
     """
 }
-
-// Expands VCF into a more manageable CSV format:
-// - Splits INFO field into individual columns
-// - Parses SnpEff ANN annotations (if present)
-// - Splits FORMAT/NORMAL/TUMOR into sample-specific columns
-// - Adds lncRNA column if variant overlaps lncRNA exon coordinates
-// - Adds known_snp_* columns if variant position exists in consensus VCF
-//
-// Optional inputs:
-// - lncrna_ref: GTF-like file with lncRNA exon coordinates
-// - known_snps: Consensus VCF (e.g., from FreeBayes) for cohort variants
