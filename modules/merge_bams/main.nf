@@ -12,8 +12,8 @@ process MERGE_BAMS {
     
     script:
     """
-    samtools merge ${sample}.merged.bam ${bams}
-    samtools index ${sample}.merged.bam
+    samtools merge -@ $task.cpus ${sample}.merged.bam ${bams}
+    samtools index -@ $task.cpus ${sample}.merged.bam
     """
 
     stub:

@@ -8,7 +8,6 @@ include {GTF_TO_RRNA_BED} from './modules/gtf_to_rrna_bed'
 include {BED_TO_INTERVAL_LIST} from './modules/bed_to_interval_list'
 include {PICARD_COLLECT_RNASEQ_METRICS} from './modules/picard_collect_rnaseq_metrics'
 include {MULTIQC} from './modules/multiqc'
-include {SAMTOOLS_SORT} from './modules/samtools_sort'
 include {BAM_INDEX} from './modules/bam_index'
 include {MERGE_BAMS} from './modules/merge_bams'
 include {SAMTOOLS_PILEUP} from './modules/samtools_pileup'
@@ -75,9 +74,7 @@ workflow {
     
     MULTIQC(multiqc_ch)
 
-    SAMTOOLS_SORT(STAR_ALIGN.out.bam)
-
-    BAM_INDEX(SAMTOOLS_SORT.out)
+    BAM_INDEX(STAR_ALIGN.out.bam)
 
     BAM_INDEX.out
         .branch {
@@ -122,11 +119,19 @@ workflow {
 
     FILTER_VARIANTS(varscan_combined_ch)
 
-    BUILD_SNPEFF_DB(params.ref_genome, params.gtf)
+    if ( params.snpeff_db && file(params.snpeff_db).exists() ) {
+        snpeff_db_ch = Channel.value( file(params.snpeff_db) )
+    } else {
+        BUILD_SNPEFF_DB(
+            Channel.value( file(params.ref_genome) ),
+            Channel.value( file(params.gtf) )
+        )
+        snpeff_db_ch = BUILD_SNPEFF_DB.out
+    }
 
-    BUILD_SNPEFF_DB.out.view()
+    snpeff_db_ch.view()
 
-    ANNOTATE_VARIANTS(FILTER_VARIANTS.out, BUILD_SNPEFF_DB.out)
+    ANNOTATE_VARIANTS(FILTER_VARIANTS.out, snpeff_db_ch)
     
     def lncrna_file = (params.lncRNAs_ref && file(params.lncRNAs_ref).exists())
         ? file(params.lncRNAs_ref)
@@ -188,5 +193,7 @@ workflow {
 
     individuals_excel_ch = paired.map { id, file1, file2 -> [file1, file2] }.flatten()
 
-    CSV_TO_XLSX(individuals_excel_ch)
+    excel_ch = individuals_excel_ch.mix(CREATE_OUTPUT.out.flatten())
+
+    CSV_TO_XLSX(excel_ch)
 }

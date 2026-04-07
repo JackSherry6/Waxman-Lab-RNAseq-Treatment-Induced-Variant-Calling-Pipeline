@@ -1,5 +1,5 @@
 process FASTQC {
-    label 'process_single'
+    label 'process_two'
     conda 'envs/fastqc_env.yml'
     tag "${sample}"
     publishDir "${params.outdir}/fastqc", mode: 'copy'
@@ -13,7 +13,7 @@ process FASTQC {
 
     script:
     """
-    fastqc ${read1} ${read2}
+    fastqc -t $task.cpus ${read1} ${read2}
     """
 
     stub:

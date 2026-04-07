@@ -1,6 +1,6 @@
 
 process SAMTOOLS_PILEUP {
-    label 'process_high'
+    label 'process_single'
     conda 'envs/samtools_env.yml'
     //publishDir params.outdir, mode:'copy'  //mode:'move'
     tag "control_vs_${exp_name}" 

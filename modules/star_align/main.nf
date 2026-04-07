@@ -16,6 +16,7 @@ process STAR_ALIGN {
     script:
     """
     STAR \
+        --runThreadN $task.cpus \
         --genomeDir $index \
         --readFilesIn $read1 $read2 \
         --readFilesCommand zcat \

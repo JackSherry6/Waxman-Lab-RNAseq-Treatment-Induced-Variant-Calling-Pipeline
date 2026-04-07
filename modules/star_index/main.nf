@@ -13,6 +13,7 @@ process STAR_INDEX {
     """
     mkdir -p star
     STAR --runMode genomeGenerate \
+         --runThreadN $task.cpus \
          --genomeDir star \
          --genomeFastaFiles $ref_genome \
          --sjdbGTFfile $gtf \
