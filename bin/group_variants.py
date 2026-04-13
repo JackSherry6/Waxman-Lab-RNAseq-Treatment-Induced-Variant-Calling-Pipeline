@@ -1,18 +1,11 @@
 #!/usr/bin/env python3
-"""
-Combine per-sample processed CSVs into per-group SNP/indel outputs.
-"""
-
 import argparse
 import os
 import re
 from typing import Dict, List, Optional
-
 import pandas as pd
 
-
 def infer_source(filepath: str) -> str:
-    """Infer sample/source label from filename."""
     base = os.path.basename(filepath)
 
     for suffix in (".processed.csv", ".csv"):
@@ -29,27 +22,16 @@ def infer_source(filepath: str) -> str:
     m = re.search(r"(\d+)$", stem)
     return m.group(1) if m else stem
 
-
-# ── Columns averaged across samples ──────────────────────────────────────────
 FREQ_COLS  = ["FREQ_normal", "FREQ_exp"]
 DEPTH_COLS = ["Depth_normal", "Depth_exp"]
 STAT_COLS  = ["SPV", "SSC"]   # averaged
 
 AVG_COLS = FREQ_COLS + DEPTH_COLS + STAT_COLS
 
-
-# ── Columns joined across samples ────────────────────────────────────────────
-JOIN_COLS = [
-    "GT_normal", "GT_tumor",
-    "DP_normal", "DP_tumor",
-    "DP4_normal", "DP4_exp",
-]
-
+JOIN_COLS = ["GT_normal", "GT_tumor", "DP_normal", "DP_tumor", "DP4_normal", "DP4_exp",]
 
 SPECIAL_COLS = {"source", "shared_count", "Total Count", "variant_id"}
 
-
-# ── Variant identity columns ─────────────────────────────────────────────────
 VARIANT_ID_COLS = [
     "CHROM", "POS", "REF", "ALT",
     "snpeff_effect", "snpeff_impact", "snpeff_gene_name", "snpeff_gene_id",
@@ -63,29 +45,25 @@ VARIANT_ID_COLS = [
     "known_snp_type", "known_snp_ns", "known_snp_match",
 ]
 
-
 def _safe_float(val) -> float:
     try:
         return float(str(val).rstrip("%"))
     except (ValueError, TypeError):
         return float("nan")
 
-
 def _avg_series(s: pd.Series) -> float:
     vals = s.dropna().apply(_safe_float)
     return vals.mean() if len(vals) else float("nan")
 
-
 def _join_series(s: pd.Series) -> str:
     return ";".join(s.dropna().astype(str).values)
 
-
 def aggregate_per_variant(combined: pd.DataFrame) -> pd.DataFrame:
-
+    
     all_cols = list(combined.columns)
-
+    
     group_cols = [c for c in VARIANT_ID_COLS if c in all_cols]
-
+    
     if not group_cols:
         raise ValueError("No variant ID columns found.")
 
@@ -118,7 +96,6 @@ def aggregate_per_variant(combined: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
     )
 
-    # Rename averages
     rename_dict = {c: f"avg_{c}" for c in avg_present}
     grouped = grouped.rename(columns=rename_dict)
 
@@ -131,11 +108,6 @@ def aggregate_per_variant(combined: pd.DataFrame) -> pd.DataFrame:
 
 
 def format_df(df: pd.DataFrame, total_samples: int) -> pd.DataFrame:
-    """
-    Reorder columns according to the required schema.
-    """
-
-    # Rename column but keep its position
     df["total_sample_count"] = total_samples
 
     if "Total Count" in df.columns:
@@ -143,7 +115,7 @@ def format_df(df: pd.DataFrame, total_samples: int) -> pd.DataFrame:
 
     # Block immediately after ALT
     ordered_block = [
-        "SS",                 # swapped position
+        "SS",
         "avg_SPV",
         "avg_SSC",
         "avg_FREQ_normal",
@@ -161,7 +133,6 @@ def format_df(df: pd.DataFrame, total_samples: int) -> pd.DataFrame:
 
     cols = list(df.columns)
 
-    # Move ordered block right after ALT
     if "ALT" in cols:
         alt_index = cols.index("ALT")
 
@@ -175,7 +146,6 @@ def format_df(df: pd.DataFrame, total_samples: int) -> pd.DataFrame:
 
         df = df[cols]
 
-    # Ensure LOF and NMD occur between total_sample_count and snpeff_effect
     if "total_sample_count" in df.columns:
 
         insert_idx = df.columns.get_loc("total_sample_count") + 1
@@ -186,7 +156,6 @@ def format_df(df: pd.DataFrame, total_samples: int) -> pd.DataFrame:
             df.insert(insert_idx, col, df.pop(col))
             insert_idx += 1
 
-    # Move all known_snp columns to far right
     known_snp_cols = [c for c in df.columns if c.startswith("known_snp")]
 
     if known_snp_cols:
