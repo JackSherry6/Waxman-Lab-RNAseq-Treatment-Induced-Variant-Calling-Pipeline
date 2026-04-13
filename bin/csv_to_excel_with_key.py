@@ -9,10 +9,8 @@ def main():
     parser.add_argument("-o", "--output", help="Output Excel file (.xlsx)", default="output.xlsx")
     args = parser.parse_args()
 
-    # Read CSV
     df = pd.read_csv(args.input_csv)
 
-    # Legend for individual sample CSVs (control_vs_<sample>_snp / _indel)
     individuals_legend = {
         "CHROM": "Chromosome",
         "POS": "Position on chromosome",
@@ -56,11 +54,9 @@ def main():
         "known_snp_match": "Match type: exact / same_position_same_ref / same_position_diff_ref"
     }
 
-    # Legend for group-level CSVs (<group>_snps / _indels) — fill in descriptions manually
     group_legend = {
     }
 
-    # Select legend based on filename: plural (_snps/_indels) = group, singular (_snp/_indel) = individual
     import os
     basename = os.path.splitext(os.path.basename(args.input_csv))[0]
     if basename.endswith('_snps') or basename.endswith('_indels'):
@@ -70,7 +66,6 @@ def main():
 
     legend_df = pd.DataFrame(list(legend.items()), columns=["Column", "Description"])
 
-    # Write Excel file
     with pd.ExcelWriter(args.output, engine="openpyxl") as writer:
         df.to_excel(writer, sheet_name="data", index=False)
         legend_df.to_excel(writer, sheet_name="legend", index=False)
