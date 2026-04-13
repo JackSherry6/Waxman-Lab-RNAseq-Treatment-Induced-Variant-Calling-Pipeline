@@ -1,12 +1,4 @@
 #!/usr/bin/env python3
-"""
-VCF Processing Script
-- Parses VCF files and expands INFO/FORMAT fields
-- Expands all SnpEff ANN entries (one row per annotation)
-- Annotates with lncRNA overlaps (if reference provided)
-- Annotates with consensus/known SNP VCF overlaps (if provided)
-"""
-
 import re
 import gzip
 import argparse
@@ -25,11 +17,6 @@ SNPEFF_KEYS = [
 
 
 def parse_snpeff_ann_all(ann_value) -> list:
-    """
-    Parse ALL comma-separated SnpEff annotations from an ANN field.
-    Returns a list of dicts, one per annotation entry.
-    If the value is missing/empty, returns a single dict of Nones.
-    """
     empty = {k: None for k in SNPEFF_KEYS}
 
     if pd.isna(ann_value):
@@ -53,12 +40,6 @@ def parse_snpeff_ann_all(ann_value) -> list:
 
 
 def expand_ann_column(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Expand the ANN column so that each SnpEff annotation entry becomes its
-    own row.  The original variant-level columns are duplicated for each
-    annotation.  This is the standard approach so that every gene/effect
-    combination is preserved for downstream filtering.
-    """
     if "ANN" not in df.columns:
         return df
 
@@ -80,7 +61,6 @@ def expand_ann_column(df: pd.DataFrame) -> pd.DataFrame:
     return expanded
 
 def compute_depth_from_dp4(dp4_value):
-    """Return integer depth from DP4 string."""
     if pd.isna(dp4_value):
         return None
     try:
@@ -89,7 +69,6 @@ def compute_depth_from_dp4(dp4_value):
         return None
 
 def read_vcf_to_df(vcf_path: str) -> pd.DataFrame:
-    """Read a VCF file into a pandas DataFrame."""
     skip_rows = 0
     opener = gzip.open if vcf_path.endswith(".gz") else open
 
@@ -107,7 +86,6 @@ def read_vcf_to_df(vcf_path: str) -> pd.DataFrame:
 
 
 def split_info_column(df: pd.DataFrame) -> pd.DataFrame:
-    """Split the INFO column into separate columns."""
     info_df = (
         df["INFO"]
         .astype(str)
@@ -123,7 +101,6 @@ def split_info_column(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def parse_format_row(format_str: str, normal_str: str, tumor_str: str) -> pd.Series:
-    """Parse FORMAT field and split NORMAL/TUMOR sample data."""
     keys = str(format_str).split(":")
     row = {}
     for k, n, t in zip(keys, str(normal_str).split(":"), str(tumor_str).split(":")):
@@ -131,13 +108,7 @@ def parse_format_row(format_str: str, normal_str: str, tumor_str: str) -> pd.Ser
         row[f"{k}_tumor"] = t
     return pd.Series(row)
 
-
-# =============================================================================
-# lncRNA Reference Loading and Overlap Checking
-# =============================================================================
-
 def parse_gtf_attributes(attr_string: str) -> dict:
-    """Parse GTF attribute string into a dictionary."""
     attrs = {}
     pattern = r'(\w+)\s*["\']([^"\']*)["\']'
     matches = re.findall(pattern, attr_string)
@@ -147,10 +118,6 @@ def parse_gtf_attributes(attr_string: str) -> dict:
 
 
 def load_lncrna_reference(lncrna_file: str) -> dict:
-    """
-    Load lncRNA reference file (GTF-like format with exon coordinates).
-    Returns a dictionary organized by chromosome for efficient lookup.
-    """
     if not lncrna_file:
         return None
 
@@ -183,7 +150,6 @@ def load_lncrna_reference(lncrna_file: str) -> dict:
                     'gene_name': gene_name
                 })
 
-        # Sort regions by start position for each chromosome
         for chrom in lncrna_regions:
             lncrna_regions[chrom].sort(key=lambda x: x['start'])
 
@@ -202,35 +168,24 @@ def load_lncrna_reference(lncrna_file: str) -> dict:
 
 
 def check_lncrna_overlap(chrom: str, pos: int, lncrna_regions: dict) -> str:
-    """
-    Check if a SNP position overlaps with any lncRNA exon.
-    Returns ALL overlapping gene names (semicolon-separated), not just the first.
-    Scans every region on the chromosome to handle overlapping intervals from
-    different genes.
-    """
+    
     if not lncrna_regions or chrom not in lncrna_regions:
         return ""
 
     overlapping_genes = []
 
     for region in lncrna_regions[chrom]:
-        # Skip regions that end before our position
         if region['end'] < pos:
             continue
-        # If this region starts after our position, no further region
-        # (sorted by start) can contain pos either, so stop.
         if region['start'] > pos:
             break
-        # region['start'] <= pos <= region['end']
         overlapping_genes.append(region['gene_name'])
 
-    # Return unique gene names, semicolon-separated
     unique_genes = list(dict.fromkeys(overlapping_genes))
     return ';'.join(unique_genes) if unique_genes else ""
 
 
 def annotate_lncrna(df: pd.DataFrame, lncrna_regions: dict) -> pd.DataFrame:
-    """Add lncRNA column to dataframe based on coordinate overlap."""
     if lncrna_regions is None:
         return df
 
@@ -250,16 +205,8 @@ def annotate_lncrna(df: pd.DataFrame, lncrna_regions: dict) -> pd.DataFrame:
 
     return df
 
-
-# =============================================================================
-# Consensus/Known SNPs VCF Loading and Overlap Checking
-# =============================================================================
-
 def load_known_snps_vcf(vcf_file: str) -> dict:
-    """
-    Load consensus/known SNPs VCF file and organize by (chrom, pos) for lookup.
-    Returns a dictionary with (chrom, pos) as keys.
-    """
+    
     if not vcf_file:
         return None
 
@@ -353,10 +300,6 @@ def load_known_snps_vcf(vcf_file: str) -> dict:
 
 def check_known_snp_overlap(chrom: str, pos: int, ref: str, alt: str,
                             vcf_variants: dict) -> dict:
-    """
-    Check if a variant overlaps with one in the known SNPs VCF.
-    Returns a dictionary with annotation fields.
-    """
     result = {
         'known_snp_overlap': 'No',
         'known_snp_ref': '',
@@ -397,7 +340,6 @@ def check_known_snp_overlap(chrom: str, pos: int, ref: str, alt: str,
 
 
 def annotate_known_snps(df: pd.DataFrame, vcf_variants: dict) -> pd.DataFrame:
-    """Add known SNP annotation columns to dataframe based on coordinate overlap."""
     if vcf_variants is None:
         return df
 
@@ -423,17 +365,7 @@ def annotate_known_snps(df: pd.DataFrame, vcf_variants: dict) -> pd.DataFrame:
 
     return df
 
-
-# =============================================================================
-# Column Reordering
-# =============================================================================
-
 def reorder_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Reorder columns so that sample-level columns (GT, DP, RD, AD, FREQ, DP4
-    for normal and tumor) appear between SPV and ANN.
-    Also inserts Depth_normal (after DP4_normal) and Depth_exp (after DP4_tumor).
-    """
     sample_cols = [
         "GT_normal", "GT_tumor",
         "DP_normal", "DP_tumor",
@@ -449,13 +381,11 @@ def reorder_columns(df: pd.DataFrame) -> pd.DataFrame:
         print("  No sample columns found to reorder")
         return df
 
-    # Add the two new empty columns
     if "Depth_normal" not in df.columns:
         df["Depth_normal"] = ""
     if "Depth_exp" not in df.columns:
         df["Depth_exp"] = ""
 
-    # Build the desired insertion order
     insert_order = []
     for c in sample_cols_present:
         insert_order.append(c)
@@ -484,11 +414,6 @@ def reorder_columns(df: pd.DataFrame) -> pd.DataFrame:
     print("  Reordered sample columns between SPV and ANN")
     return df[new_order]
 
-
-# =============================================================================
-# Main Processing
-# =============================================================================
-
 def main():
     ap = argparse.ArgumentParser(
         description="Process VCF files with optional lncRNA and known SNP annotations"
@@ -510,24 +435,19 @@ def main():
         print(f"Known SNPs VCF: {args.known_snps}")
     print(f"{'='*60}\n")
 
-    # Load reference files first
     lncrna_regions = load_lncrna_reference(args.lncrna) if args.lncrna else None
     known_snps = load_known_snps_vcf(args.known_snps) if args.known_snps else None
 
-    # Read and process input VCF
     print(f"\nReading input VCF: {args.input_vcf}")
     df = read_vcf_to_df(args.input_vcf)
     print(f"  Loaded {len(df)} variants")
 
-    # Split INFO column
     if "INFO" in df.columns:
         df = split_info_column(df)
 
-        # Expand SnpEff annotations: one row per ANN entry
         if "ANN" in df.columns:
             df = expand_ann_column(df)
 
-    # Parse FORMAT/sample columns
     if all(c in df.columns for c in ["FORMAT", "NORMAL", "TUMOR"]):
         print("Parsing sample genotype data...")
         format_df = df.apply(
@@ -543,19 +463,15 @@ def main():
     if "DP4_exp" in df.columns:
         df["Depth_exp"] = df["DP4_exp"].apply(compute_depth_from_dp4)
 
-    # Add lncRNA annotations
     if lncrna_regions:
         df = annotate_lncrna(df, lncrna_regions)
 
-    # Add known SNP annotations
     if known_snps:
         df = annotate_known_snps(df, known_snps)
 
-    # Reorder columns: move sample cols between SPV and ANN, add Depth_normal & Depth_exp
     print("\nReordering columns...")
     df = reorder_columns(df)
 
-    # Drop unwanted columns (original set + additional removals)
     drop_cols = [
         "ID", "QUAL", "GPV", "FILTER", "SOMATIC", "GQ_normal", "GQ_tumor",
         "DP", "ANN", "snpeff_allele",
@@ -567,7 +483,6 @@ def main():
     if actually_dropped:
         print(f"  Dropped: {', '.join(actually_dropped)}")
 
-    # Rename columns as final step
     rename_map = {}
     if "DP4_tumor" in df.columns:
         rename_map["DP4_tumor"] = "DP4_exp"
@@ -577,12 +492,10 @@ def main():
         df = df.rename(columns=rename_map)
         print(f"  Renamed: {rename_map}")
 
-    # Write output
     print(f"\nWriting output to: {args.output_csv}")
     df.to_csv(args.output_csv, index=False)
     print(f"  Wrote {len(df)} rows with {len(df.columns)} columns")
 
-    # Print column summary
     print(f"\nOutput columns: {', '.join(df.columns[:10])}...")
     if 'lncRNA' in df.columns:
         print(f"  lncRNA column included")
