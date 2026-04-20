@@ -43,10 +43,11 @@ JOIN_COLS = [
     "GT_normal", "GT_tumor",
     "DP_normal", "DP_tumor",
     "DP4_normal", "DP4_exp",
+    "SS",
 ]
 
 
-SPECIAL_COLS = {"source", "shared_count", "Total Count", "variant_id"}
+SPECIAL_COLS = {"shared_count", "Total Count", "variant_id"}
 
 
 # ── Variant identity columns ─────────────────────────────────────────────────
@@ -100,10 +101,6 @@ def aggregate_per_variant(combined: pd.DataFrame) -> pd.DataFrame:
     for col in join_present:
         agg_dict[col] = _join_series
 
-    if "source" in all_cols:
-        agg_dict["source"] = lambda s: ";".join(
-            s.dropna().astype(str).unique()
-        )
 
     accounted = set(group_cols) | set(agg_dict.keys()) | SPECIAL_COLS
 
@@ -119,13 +116,10 @@ def aggregate_per_variant(combined: pd.DataFrame) -> pd.DataFrame:
     )
 
     # Rename averages
-    rename_dict = {c: f"avg_{c}" for c in avg_present}
+    dp4_rename = {c: f"avg_{c}" for c in ["DP4_normal", "DP4_exp"] if c in grouped.columns}
+    rename_dict = {c: f"avg_{c}" for c in avg_present} | dp4_rename
     grouped = grouped.rename(columns=rename_dict)
 
-    if "source" in grouped.columns:
-        grouped["shared_count"] = grouped["source"].apply(
-            lambda s: len(set(s.split(";"))) if pd.notna(s) else 0
-        )
 
     return grouped
 
@@ -143,16 +137,15 @@ def format_df(df: pd.DataFrame, total_samples: int) -> pd.DataFrame:
 
     # Block immediately after ALT
     ordered_block = [
-        "SS",                 # swapped position
+        "SS",
         "avg_SPV",
         "avg_SSC",
         "avg_FREQ_normal",
         "avg_FREQ_exp",
-        "DP4_normal",
+        "avg_DP4_normal",
         "avg_Depth_normal",
-        "DP4_exp",
+        "avg_DP4_exp",
         "avg_Depth_exp",
-        "source",
         "shared_count",
         "total_sample_count",
     ]
