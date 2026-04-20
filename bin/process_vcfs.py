@@ -181,7 +181,7 @@ def check_lncrna_overlap(chrom: str, pos: int, lncrna_regions: dict) -> str:
             break
         overlapping_genes.append(region['gene_name'])
 
-    unique_genes = list(dict.fromkeys(overlapping_genes))
+    unique_genes = sorted(dict.fromkeys(overlapping_genes))
     return ';'.join(unique_genes) if unique_genes else ""
 
 

@@ -8,12 +8,10 @@ include {GTF_TO_RRNA_BED} from './modules/gtf_to_rrna_bed'
 include {BED_TO_INTERVAL_LIST} from './modules/bed_to_interval_list'
 include {PICARD_COLLECT_RNASEQ_METRICS} from './modules/picard_collect_rnaseq_metrics'
 include {MULTIQC} from './modules/multiqc'
-include {SAMTOOLS_SORT} from './modules/samtools_sort'
 include {BAM_INDEX} from './modules/bam_index'
 include {MERGE_BAMS} from './modules/merge_bams'
-include {SAMTOOLS_PILEUP} from './modules/samtools_pileup'
-include {VARSCAN_TUMOR} from './modules/varscan_somatic_tumor'
-include {VARSCAN_NONTUMOR} from './modules/varscan_somatic_nontumor'
+include {VARSCAN_CHR} from './modules/varscan_chr'
+include {MERGE_VCFS} from './modules/merge_vcfs'
 include {FILTER_VARIANTS} from './modules/filter_variants'
 include {BUILD_SNPEFF_DB} from './modules/build_snpeff_db'
 include {ANNOTATE_VARIANTS} from './modules/annotate_variants'
@@ -73,9 +71,9 @@ workflow {
     
     MULTIQC(multiqc_ch)
 
-    SAMTOOLS_SORT(STAR_ALIGN.out.bam)
-
-    BAM_INDEX(SAMTOOLS_SORT.out)
+    // STAR already outputs coordinate-sorted BAMs (--outSAMtype BAM SortedByCoordinate)
+    // so a separate sort step is not needed
+    BAM_INDEX(STAR_ALIGN.out.bam)
 
     BAM_INDEX.out
         .branch {
@@ -98,31 +96,38 @@ workflow {
         .combine(MERGE_BAMS.out)
         .set { paired_ch }
     
-    SAMTOOLS_PILEUP(paired_ch, params.ref_genome)
+    // Build chromosome channel from reference FAI (requires indexed reference genome)
+    chroms_ch = Channel
+        .fromPath(params.ref_genome + '.fai')
+        .splitCsv(sep: '\t')
+        .map { row -> row[0] }
 
-    SAMTOOLS_PILEUP.out
-        .branch {
-            tumor: it[2].startsWith('Tumor')
-            exp_nontumor: !it[2].startsWith('Tumor')
+    // Add tumor_purity to each sample pair, then fan out across chromosomes
+    paired_ch
+        .map { exp_name, exp_bam, exp_bai, ctrl_name, ctrl_bam, ctrl_bai ->
+            def purity = exp_name.startsWith('Tumor') ? 0.8 : 0.95
+            tuple(exp_name, exp_bam, exp_bai, ctrl_name, ctrl_bam, ctrl_bai, purity)
         }
-        .set { paired_branched_channels }
+        .combine(chroms_ch)
+        .set { varscan_input_ch }
 
-    exp_nontumor_ch = paired_branched_channels.exp_nontumor
-    tumor_ch = paired_branched_channels.tumor
+    // Run pileup + VarScan per chromosome in parallel (no persistent mpileup files)
+    VARSCAN_CHR(varscan_input_ch, params.ref_genome, params.control_cnt)
 
-    VARSCAN_NONTUMOR(exp_nontumor_ch, params.control_cnt)
+    // Collect per-chromosome VCFs per sample, then merge
+    snp_to_merge_ch = VARSCAN_CHR.out.snp
+        .groupTuple()
+        .map { exp, vcfs, tbis -> tuple(exp, 'snp', vcfs, tbis) }
 
-    VARSCAN_TUMOR(tumor_ch, params.control_cnt)
+    indel_to_merge_ch = VARSCAN_CHR.out.indel
+        .groupTuple()
+        .map { exp, vcfs, tbis -> tuple(exp, 'indel', vcfs, tbis) }
 
-    varscan_combined_ch = VARSCAN_NONTUMOR.out.snp.mix(VARSCAN_TUMOR.out.snp)
-        .mix(VARSCAN_NONTUMOR.out.indel)
-        .mix(VARSCAN_TUMOR.out.indel)
-
-    FILTER_VARIANTS(varscan_combined_ch)
+    MERGE_VCFS(snp_to_merge_ch.mix(indel_to_merge_ch))
 
     BUILD_SNPEFF_DB(params.ref_genome, params.gtf)
 
-    ANNOTATE_VARIANTS(FILTER_VARIANTS.out, BUILD_SNPEFF_DB.out)
+    ANNOTATE_VARIANTS(MERGE_VCFS.out, BUILD_SNPEFF_DB.out)
     
     def lncrna_file = (params.lncRNAs_ref && file(params.lncRNAs_ref).exists())
         ? file(params.lncRNAs_ref)
